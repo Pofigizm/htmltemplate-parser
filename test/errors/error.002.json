@@ -1,6 +1,6 @@
 {
     "name": "SyntaxError",
-    "message": "Expected a </TMPL_IF> but </TMPL_UNLESS> found.",
+    "message": "Expected a </TMPL_IF> but </TMPL_UNLESS> found. vi:norm 1G1|",
     "line": 1,
     "column": 1,
     "offset": 0,

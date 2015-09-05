@@ -1,6 +1,6 @@
 {
     "name": "SyntaxError",
-    "message": "Unexpected $ in attribute name.",
+    "message": "Unexpected $ in attribute name. vi:norm 1G10|",
     "line": 1,
     "column": 10,
     "offset": 9,

@@ -52,10 +52,11 @@
   };
 
   function SyntaxError(message, location) {
-    var l = location().start;
+    var l = location().start,
+        lvi = ' vi:norm ' + l.line + 'G' + l.column + '|';
 
     this.name = "SyntaxError";
-    this.message = message;
+    this.message = message + lvi;
     this.line = l.line;
     this.column = l.column;
     this.offset = l.offset;

@@ -1,6 +1,6 @@
 {
     "name": "SyntaxError",
-    "message": "Expected a closing bracket.",
+    "message": "Expected a closing bracket. vi:norm 12G18|",
     "line": 12,
     "column": 18,
     "offset": 194,

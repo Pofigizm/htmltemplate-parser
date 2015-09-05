@@ -1,17 +1,66 @@
 #!/usr/bin/env node
 
+var EOL = require('os').EOL;
 var fs = require('fs');
 var inspect = require('util').inspect;
 
-var parser = require('../parser');
+var parser = require('..');
 
 var argv = require('yargs')
-    .usage('Usage: parse --path tmpl.inc')
-    .demand(['path'])
+    .usage('Usage: $0 [options]')
+    .options({
+        'path': {
+            demand: true,
+            describe: 'file to parse',
+            type: 'string'
+        },
+        'pretty': {
+            describe: 'output with colors',
+            type: 'boolean'
+        },
+        'ignore-html': {
+            describe: 'treat HTML tags as text',
+            type: 'boolean'
+        }
+    })
     .argv;
 
-var template = fs.readFileSync(argv.path).toString().trim();
+var template = fs.readFileSync(argv.path, 'utf8').trim();
 
-var ast = parser.parse(template);
+try {
+    var ast = parser.parse(template, {
+        ignoreHTMLTags: argv.ignoreHtml
+    });
 
-console.log(inspect(ast, { colors: true, depth: Infinity }));
+    if (argv.pretty) {
+        console.log(inspect(ast, { colors: true, depth: Infinity }));
+    } else {
+        console.log(JSON.stringify(ast, null, 4));
+    }
+} catch(e) {
+    console.error(
+        formatFileError(argv.path, template, e)
+    );
+}
+
+function formatFileError(filepath, content, error) {
+    return (
+        filepath + ':' + error.line + ':' + error.column + EOL +
+        EOL +
+        findLine(content, error.offset) + EOL +
+        pointTo(error.column) + EOL +
+        EOL +
+        error.name + ': ' + error.message
+    );
+
+    function findLine(string, offset) {
+        var start = string.lastIndexOf('\n', offset);
+        var end = string.indexOf('\n', offset);
+
+        return string.slice(start + 1, end);
+    }
+
+    function pointTo(column) {
+        return (new Array(column)).join(' ') + '^';
+    }
+}

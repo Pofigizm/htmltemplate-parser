@@ -53,6 +53,10 @@
     });
   }
 
+  function extractThird(list) {
+    return list[3];
+  }
+
   var BLOCK_TYPES = {
     COMMENT: "Comment",
     TAG: "Tag",
@@ -74,13 +78,16 @@
 
   var EXPRESSION_TOKENS = {
     IDENTIFIER: "Identifier",
+    FUNCTION_IDENTIFIER: "FunctionIdentifier",
     LITERAL: "Literal"
   };
 
   var EXPRESSION_TYPES = {
     UNARY: "UnaryExpression",
     BINARY: "BinaryExpression",
-    TERNARY: "ConditionalExpression"
+    TERNARY: "ConditionalExpression",
+    MEMBER: "MemberExpression",
+    CALL: "CallExpression"
   };
 
   function SyntaxError(message, location) {
@@ -463,6 +470,7 @@ DoubleQuotedText = text:$(!NonText (DoubleStringCharacter / LineTerminator))+ {
 
 // Operator precedence:
 //  >  ! ~ + -
+//  >  =~ !~
 //  <  * / %
 //  <  + - .
 //  -  < > <= >= lt gt le ge
@@ -473,14 +481,14 @@ DoubleQuotedText = text:$(!NonText (DoubleStringCharacter / LineTerminator))+ {
 //  <  and
 //  <  or xor
 PerlExpression
-  = test:LogicalStringOrExpression __ "?" __ consequent:PrimaryExpression __ ":" __ alternate:PrimaryExpression {
-    return {
-      type: EXPRESSION_TYPES.TERNARY,
-      test: test,
-      consequent: consequent,
-      alternate: alternate
-    };
-  }
+  = test:LogicalStringOrExpression __ "?" __ consequent:PerlExpression __ ":" __ alternate:PerlExpression {
+      return {
+        type: EXPRESSION_TYPES.TERNARY,
+        test: test,
+        consequent: consequent,
+        alternate: alternate
+      };
+    }
   / LogicalStringOrExpression
 
 LogicalStringOrExpression = first:LogicalStringAndExpression rest:(__ ("xor" / "or") __ LogicalStringAndExpression)* {
@@ -492,14 +500,14 @@ LogicalStringAndExpression = first:UnaryStringNotExpression rest:(__ "and" __ Un
 }
 
 UnaryStringNotExpression
-  = operator:"not" WhiteSpace+ argument:LogicalSymbolicOrExpression {
-    return {
-      type: EXPRESSION_TYPES.UNARY,
-      operator: operator,
-      argument: argument,
-      prefix: true
-    };
-  }
+  = operator:"not" __ argument:LogicalSymbolicOrExpression {
+      return {
+        type: EXPRESSION_TYPES.UNARY,
+        operator: operator,
+        argument: argument,
+        prefix: true
+      };
+    }
   / LogicalSymbolicOrExpression
 
 LogicalSymbolicOrExpression = first:LogicalSymbolicAndExpression rest:(__ "||" __ LogicalSymbolicAndExpression)* {
@@ -522,45 +530,145 @@ AdditiveExpression = first:MultiplicativeExpression rest:(__ AdditiveOperator __
   return buildBinaryExpression(first, rest);
 }
 
-MultiplicativeExpression = first:UnarySymbolicExpression rest:(__ MultiplicativeOperator __ UnarySymbolicExpression)* {
+MultiplicativeExpression = first:MatchExpression rest:(__ MultiplicativeOperator __ MatchExpression)* {
+  return buildBinaryExpression(first, rest);
+}
+
+MatchExpression = first:UnarySymbolicExpression rest:(__ MatchOperator __ UnarySymbolicExpression)* {
   return buildBinaryExpression(first, rest);
 }
 
 UnarySymbolicExpression
-  = operator:UnarySymbolicOperator __ argument:PrimaryExpression {
-    return {
-      type: EXPRESSION_TYPES.UNARY,
-      operator: operator,
-      argument: argument,
-      prefix: true
-    };
-  }
-  / PrimaryExpression
+  = operator:UnarySymbolicOperator __ argument:CallExpression {
+      return {
+        type: EXPRESSION_TYPES.UNARY,
+        operator: operator,
+        argument: argument,
+        prefix: true
+      };
+    }
+  / CallExpression
+
+CallExpression
+  = callee:PerlFunctionIdentifier __ args:Arguments {
+      return {
+        type: EXPRESSION_TYPES.CALL,
+        callee: callee,
+        arguments: args
+      };
+    }
+  / MemberExpression
+
+MemberExpression
+  = first:PrimaryExpression
+    rest:(
+        __ "->"? "{" __ property:PerlIdentifier __ "}" {
+          return {
+            property: property,
+            computed: true
+          };
+        }
+      / __ "->"? "[" __ property:PerlIdentifier __ "]" {
+          return {
+            property: property,
+            computed: true
+          };
+        }
+      / __ "->"? "{" __ value:(PerlIdentifierName / NumericLiteral) __ "}" {
+          return {
+            property: token({
+              type: EXPRESSION_TOKENS.LITERAL,
+              value: value
+            }, location),
+            computed: false
+          };
+        }
+      / __ "->"? "[" __ value:NumericLiteral __ "]" {
+          return {
+            property: token({
+              type: EXPRESSION_TOKENS.LITERAL,
+              value: value
+            }, location),
+            computed: false
+          };
+        }
+    )*
+    {
+      return buildTree(first, rest, function(result, element) {
+        return {
+          type: EXPRESSION_TYPES.MEMBER,
+          object: result,
+          property: element.property,
+          computed: element.computed
+        };
+      });
+    }
 
 PrimaryExpression
   = PerlIdentifier
   / PerlLiteral
   / "(" __ e:PerlExpression __ ")" { return e; }
 
-PerlIdentifier = "$" name:$PerlIdentifierCharacter+ {
+PerlIdentifier
+  = name:$(
+      ("@" / "%")? "$" PerlIdentifierName
+    / "__first__"
+    / "__last__"
+    / "__counter__"
+  )
+  {
+    return token({
+      type: EXPRESSION_TOKENS.IDENTIFIER,
+      name: name
+    }, location);
+  }
+
+PerlFunctionIdentifier = name:PerlIdentifierName {
   return token({
-    type: EXPRESSION_TOKENS.IDENTIFIER,
+    type: EXPRESSION_TOKENS.FUNCTION_IDENTIFIER,
     name: name
   }, location);
 }
 
-PerlLiteral = literal:(StringLiteral / NumericLiteral) {
-  return token({
-    type: EXPRESSION_TOKENS.LITERAL,
-    value: literal
-  }, location);
-}
+PerlIdentifierName
+  = $([a-zA-Z_]+ [a-zA-Z0-9_/]*)
+
+PerlLiteral
+  = PrimitivePerlLiteral
+  / RegularExpressionLiteral
+
+PrimitivePerlLiteral
+  = literal:(StringLiteral / NumericLiteral) {
+    return token({
+      type: EXPRESSION_TOKENS.LITERAL,
+      value: literal
+    }, location);
+  }
+
+Arguments
+  = single:(PerlIdentifier / PrimitivePerlLiteral) {
+      return [single];
+    }
+  / "(" __ args:(ArgumentList __)? ")" {
+      return (args && args[0]) ? args[0] : [];
+    }
+
+ArgumentList
+  = first:PerlExpression rest:(__ "," __ PerlExpression)* {
+      return [first].concat(
+        rest.map(extractThird)
+      );
+    }
 
 UnarySymbolicOperator
   = $("+" !"=")
   / $("-" !"=")
   / "~"
   / "!"
+
+MatchOperator
+  = "=~"
+  / "!~"
 
 MultiplicativeOperator
   = $("*" !"=")
@@ -761,6 +869,50 @@ ExponentIndicator
 SignedInteger
   = [+-]? DecimalDigit+
 
+RegularExpressionLiteral "regular expression"
+  = operators:$RegularExpressionOperators "/" pattern:$RegularExpressionBody "/" flags:$RegularExpressionFlags {
+      return token({
+        type: EXPRESSION_TOKENS.LITERAL,
+        regex: {
+          pattern: pattern,
+          flags: flags,
+          operators: operators
+        }
+      }, location);
+    }
+
+RegularExpressionBody
+  = RegularExpressionFirstChar RegularExpressionChar*
+
+RegularExpressionFirstChar
+  = ![*\\/[] RegularExpressionNonTerminator
+  / RegularExpressionBackslashSequence
+  / RegularExpressionClass
+
+RegularExpressionChar
+  = ![\\/[] RegularExpressionNonTerminator
+  / RegularExpressionBackslashSequence
+  / RegularExpressionClass
+
+RegularExpressionBackslashSequence
+  = "\\" RegularExpressionNonTerminator
+
+RegularExpressionNonTerminator
+  = !LineTerminator SourceCharacter
+
+RegularExpressionClass
+  = "[" RegularExpressionClassChar* "]"
+
+RegularExpressionClassChar
+  = ![\]\\] RegularExpressionNonTerminator
+  / RegularExpressionBackslashSequence
+
+RegularExpressionFlags
+  = [a-z]*
+
+RegularExpressionOperators
+  = [a-z]*
+
 WhiteSpace "whitespace"
   = "\t"
   / "\v"
@@ -781,9 +933,6 @@ CommentStart
 
 SourceCharacter
   = .
-
-PerlIdentifierCharacter
-  = [a-zA-Z_]
 
 LineTerminator "end of line"
   = "\n"
@@ -812,11 +961,15 @@ PerlExpressionEnd
 
 SingleStringCharacter
   = !("'" / "\\" / LineTerminator) SourceCharacter { return text(); }
-  / "\\" esc:SingleEscapeCharacter { return esc; }
+  / "\\" esc:CharacterEscapeSequence { return esc; }
 
 DoubleStringCharacter
   = !("\"" / "\\" / LineTerminator) SourceCharacter { return text(); }
-  / "\\" esc:SingleEscapeCharacter { return esc; }
+  / "\\" esc:CharacterEscapeSequence { return esc; }
+
+CharacterEscapeSequence
+  = SingleEscapeCharacter
+  / NonEscapeCharacter
 
 SingleEscapeCharacter
   = "'"
@@ -828,3 +981,12 @@ SingleEscapeCharacter
   / "r"  { return "\r"; }
   / "t"  { return "\t"; }
   / "v"  { return "\v"; }
+
+NonEscapeCharacter
+  = !(EscapeCharacter / LineTerminator) SourceCharacter { return text(); }
+
+EscapeCharacter
+  = SingleEscapeCharacter
+  / DecimalDigit
+  / "x"
+  / "u"

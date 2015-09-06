@@ -12,7 +12,15 @@
         object.type === BLOCK_TYPES.ALTERNATE_CONDITION_BRANCH ||
         object.type === ATTRIBUTE_TYPES.EXPRESSION ||
         object.type === ATTRIBUTE_TYPES.PAIR ||
-        object.type === ATTRIBUTE_TYPES.SINGLE
+        object.type === ATTRIBUTE_TYPES.SINGLE ||
+        object.type === EXPRESSION_TOKENS.IDENTIFIER ||
+        object.type === EXPRESSION_TOKENS.FUNCTION_IDENTIFIER ||
+        object.type === EXPRESSION_TOKENS.LITERAL ||
+        object.type === EXPRESSION_TYPES.UNARY ||
+        object.type === EXPRESSION_TYPES.BINARY ||
+        object.type === EXPRESSION_TYPES.TERNARY ||
+        object.type === EXPRESSION_TYPES.MEMBER ||
+        object.type === EXPRESSION_TYPES.CALL
       )
     );
 
@@ -414,10 +422,11 @@ ConditionalHTMLAttributes =
     }
   )?
   __ end:ConditionEndTag
-  & {
-    return start.name === end;
-  }
   {
+    if (start.name != end) {
+      throw new SyntaxError("Expected a </" + start.name + "> but </" + end + "> found.", location);
+    }
+
     var primaryCondition = token({
       type: BLOCK_TYPES.CONDITION_BRANCH,
       condition: start.condition,
@@ -500,7 +509,7 @@ LogicalStringAndExpression = first:UnaryStringNotExpression rest:(__ "and" __ Un
 }
 
 UnaryStringNotExpression
-  = operator:"not" __ argument:LogicalSymbolicOrExpression {
+  = operator:"not" __ argument:UnaryStringNotExpression {
       return {
         type: EXPRESSION_TYPES.UNARY,
         operator: operator,
@@ -510,7 +519,7 @@ UnaryStringNotExpression
     }
   / LogicalSymbolicOrExpression
 
-LogicalSymbolicOrExpression = first:LogicalSymbolicAndExpression rest:(__ "||" __ LogicalSymbolicAndExpression)* {
+LogicalSymbolicOrExpression = first:LogicalSymbolicAndExpression rest:(__ LogicalSymbolicOperator __ LogicalSymbolicAndExpression)* {
   return buildBinaryExpression(first, rest);
 }
 
@@ -539,7 +548,7 @@ MatchExpression = first:UnarySymbolicExpression rest:(__ MatchOperator __ UnaryS
 }
 
 UnarySymbolicExpression
-  = operator:UnarySymbolicOperator __ argument:CallExpression {
+  = operator:UnarySymbolicOperator __ argument:UnarySymbolicExpression {
       return {
         type: EXPRESSION_TYPES.UNARY,
         operator: operator,
@@ -562,19 +571,30 @@ CallExpression
 MemberExpression
   = first:PrimaryExpression
     rest:(
-        __ "->"? "{" __ property:PerlIdentifier __ "}" {
+        __ ("->" __)? "{" __ property:(!NumericLiteral PerlExpression) __ "}" {
           return {
-            property: property,
+            property: property[1],
             computed: true
           };
         }
-      / __ "->"? "[" __ property:PerlIdentifier __ "]" {
+      / __ ("->" __)? "[" __ property:(!NumericLiteral PerlExpression) __ "]" {
           return {
-            property: property,
+            property: property[1],
             computed: true
           };
         }
-      / __ "->"? "{" __ value:(PerlIdentifierName / NumericLiteral) __ "}" {
+      / __ ("->" __)? "{" __ value:PerlPropertyName __ "}" {
+          var number = +value;
+
+          return {
+            property: token({
+              type: EXPRESSION_TOKENS.LITERAL,
+              value: isNaN(number) ? value : number
+            }, location),
+            computed: false
+          };
+        }
+      / __ "->" __ value:PerlPropertyName __ {
           return {
             property: token({
               type: EXPRESSION_TOKENS.LITERAL,
@@ -583,7 +603,7 @@ MemberExpression
             computed: false
           };
         }
-      / __ "->"? "[" __ value:NumericLiteral __ "]" {
+      / __ ("->" __)? "[" __ value:NumericLiteral __ "]" {
           return {
             property: token({
               type: EXPRESSION_TOKENS.LITERAL,
@@ -611,10 +631,14 @@ PrimaryExpression
 
 PerlIdentifier
   = name:$(
-      ("@" / "%")? "$" PerlIdentifierName
+      [@%$]+ PerlIdentifierName
+    / "__counter__"
     / "__first__"
     / "__last__"
-    / "__counter__"
+    / "__even__"
+    / "__odd__"
+    / "last"
+    / "next"
   )
   {
     return token({
@@ -633,6 +657,9 @@ PerlFunctionIdentifier = name:PerlIdentifierName {
 PerlIdentifierName
   = $([a-zA-Z_]+ [a-zA-Z0-9_/]*)
 
+PerlPropertyName
+  = $[a-zA-Z0-9_]+
+
 PerlLiteral
   = PrimitivePerlLiteral
   / RegularExpressionLiteral
@@ -646,7 +673,7 @@ PrimitivePerlLiteral
   }
 
 Arguments
-  = single:(PerlIdentifier / PrimitivePerlLiteral) {
+  = single:CallExpression {
       return [single];
     }
   / "(" __ args:(ArgumentList __)? ")" {
@@ -697,6 +724,10 @@ EqualityOperator
   / "eq"
   / "ne"
   / "~~"
+
+LogicalSymbolicOperator
+  = "||"
+  / "//"
 
 KnownTagName
   = BlockTMPLTagName

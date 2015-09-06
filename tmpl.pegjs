@@ -317,21 +317,20 @@ CommentTag = CommentTagStart content:$(!CommentTagEnd SourceCharacter)* CommentT
 }
 
 TMPLAttributes
-  = WhiteSpace+ attrs:(AttributeWithValue / AttributeWithoutValue) { return attrs; }
+  = WhiteSpace+ attrs:(AttributeWithValue / AttributeExpr / AttributeWithoutValue) { return attrs; }
   // Expressions don't require whitespace to be separated from tag names.
   / __ expression:PerlExpressionLiteral { return expression; }
 
+PerlExpressionString =
+  expr:PerlExpression {
+    return {
+      expression: expr,
+      text: text()
+    };
+  }
+
 PerlExpressionLiteral =
-  PerlExpressionStart
-  e:(
-    expression:PerlExpression {
-      return {
-        expression: expression,
-        text: text()
-      };
-    }
-  )
-  PerlExpressionEnd
+  PerlExpressionStart e:PerlExpressionString PerlExpressionEnd
   {
     return token({
       type: ATTRIBUTE_TYPES.EXPRESSION,
@@ -340,13 +339,26 @@ PerlExpressionLiteral =
     }, location);
   }
 
-AttributeWithValue = name:AttributeToken "=" value:(AttributeToken / PerlExpressionLiteral / StringLiteral) {
+AttributeWithValue =
+  name:AttributeToken "="
+  value:(AttributeToken / PerlExpressionLiteral / StringLiteral)
+  & { return name !== 'EXPR' } {
   return token({
     type: ATTRIBUTE_TYPES.PAIR,
     name: name,
     value: value
   }, location);
 }
+
+AttributeExpr =
+  "EXPR=\"" __ e:PerlExpressionString __ "\""
+  {
+    return token({
+      type: ATTRIBUTE_TYPES.EXPRESSION,
+      content: e.expression,
+      value: e.text
+    }, location);
+  }
 
 // Predicate takes care of not matching self closing bracket in single HTML tags,
 // e.g. `<input type="text" />`.
